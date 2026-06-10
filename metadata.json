@@ -1,0 +1,6 @@
+{
+  "name": "Reaction Time Tester",
+  "description": "performance.now()とrequestAnimationFrameを使用した高精度な反応速度測定ゲーム。1.5秒から4秒のランダムな待ち時間後に表示される円を素早くクリックします。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
