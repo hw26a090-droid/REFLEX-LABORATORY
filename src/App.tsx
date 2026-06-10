@@ -36,6 +36,7 @@ interface ScoreRecord {
     color: string;
     emoji: string;
   };
+  hz?: number;
 }
 
 export default function App() {
@@ -52,6 +53,10 @@ export default function App() {
   const [lastRoundResult, setLastRoundResult] = useState<number | null>(null);
   const [foulRounds, setFoulRounds] = useState<number[]>([]);
 
+  // Refresh rate configurations
+  const [refreshRate, setRefreshRate] = useState<number>(240);
+  const [detectedHz, setDetectedHz] = useState<number | null>(null);
+
   const timeoutRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
 
@@ -61,6 +66,65 @@ export default function App() {
     const suffix = ["A", "B", "C", "X", "Y"][Math.floor(Math.random() * 5)];
     setSessionId(`LAB-${randomHex}-${suffix}`);
   }, []);
+
+  // Load refresh rate from storage if available
+  useEffect(() => {
+    try {
+      const savedHz = localStorage.getItem("reaction_tester_refreshrate");
+      if (savedHz) {
+        setRefreshRate(Number(savedHz));
+      }
+    } catch (e) {
+      console.error("Local storage read for refresh rate failed", e);
+    }
+  }, []);
+
+  // Frame rate (refresh rate) automated detector
+  useEffect(() => {
+    let start: number | null = null;
+    let frames = 0;
+    let rafId: number;
+
+    const measure = (timestamp: number) => {
+      if (!start) start = timestamp;
+      const elapsed = timestamp - start;
+      frames++;
+
+      if (elapsed < 1000) {
+        rafId = requestAnimationFrame(measure);
+      } else {
+        const measuredHz = Math.round((frames * 1000) / elapsed);
+        setDetectedHz(measuredHz);
+
+        const savedHz = localStorage.getItem("reaction_tester_refreshrate");
+        if (!savedHz) {
+          const standardHzs = [60, 75, 90, 120, 144, 165, 240, 280, 360, 500];
+          const closestHz = standardHzs.reduce((prev, curr) => 
+            Math.abs(curr - measuredHz) < Math.abs(prev - measuredHz) ? curr : prev
+          );
+          if (Math.abs(closestHz - measuredHz) <= 15) {
+            setRefreshRate(closestHz);
+          } else {
+            setRefreshRate(measuredHz > 30 ? measuredHz : 60);
+          }
+        }
+      }
+    };
+
+    rafId = requestAnimationFrame(measure);
+    return () => {
+      cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  const changeRefreshRate = (hz: number) => {
+    setRefreshRate(hz);
+    try {
+      localStorage.setItem("reaction_tester_refreshrate", String(hz));
+    } catch (e) {
+      console.error("Local storage save for refresh rate failed", e);
+    }
+  };
 
   // Load history from localStorage on mount
   useEffect(() => {
@@ -135,29 +199,61 @@ export default function App() {
     };
   };
 
-  // Determine performance rank based on average reaction time
-  const getRank = (avgTime: number) => {
-    if (avgTime < 250) {
+  // Determine performance rank based on average reaction time (with Refresh-Rate offset calibration)
+  const getRank = (avgTime: number, hz: number = refreshRate) => {
+    const offset = hz === 240 ? 0 : (500 / hz) - 2.1;
+
+    if (avgTime <= 150 + offset) {
       return {
-        name: "S",
+        name: "最高",
         color: "text-rose-400 border-rose-500/30 bg-rose-500/10 shadow-[0_0_20px_rgba(244,63,94,0.35)]"
       };
     }
-    if (avgTime < 320) {
+    if (avgTime <= 170 + offset) {
       return {
-        name: "A",
+        name: "とても良い",
         color: "text-amber-400 border-amber-500/30 bg-amber-500/10 shadow-[0_0_20px_rgba(245,158,11,0.35)]"
       };
     }
-    if (avgTime < 450) {
+    if (avgTime <= 190 + offset) {
       return {
-        name: "B",
+        name: "良い",
+        color: "text-emerald-400 border-emerald-500/30 bg-emerald-500/10 shadow-[0_0_20px_rgba(52,211,153,0.35)]"
+      };
+    }
+    if (avgTime <= 220 + offset) {
+      return {
+        name: "平均以上",
         color: "text-cyan-400 border-cyan-500/30 bg-cyan-500/10 shadow-[0_0_20px_rgba(34,211,238,0.35)]"
       };
     }
+    if (avgTime <= 260 + offset) {
+      return {
+        name: "平均",
+        color: "text-blue-400 border-blue-500/30 bg-blue-500/10 shadow-[0_0_20px_rgba(96,165,250,0.35)]"
+      };
+    }
+    if (avgTime <= 320 + offset) {
+      return {
+        name: "平均以下",
+        color: "text-indigo-400 border-indigo-500/30 bg-indigo-500/10 shadow-[0_0_20px_rgba(129,140,248,0.2)]"
+      };
+    }
+    if (avgTime <= 400 + offset) {
+      return {
+        name: "遅い",
+        color: "text-yellow-500/95 border-yellow-500/20 bg-yellow-500/5 shadow-none"
+      };
+    }
+    if (avgTime <= 500 + offset) {
+      return {
+        name: "とても遅い",
+        color: "text-slate-400 border-slate-700 bg-slate-800/20 shadow-none"
+      };
+    }
     return {
-      name: "C",
-      color: "text-slate-400 border-slate-700 bg-slate-800/20 shadow-none"
+      name: "練習が必要",
+      color: "text-rose-500/90 border-rose-950 bg-rose-950/10 shadow-none"
     };
   };
 
@@ -242,7 +338,8 @@ export default function App() {
           id: Math.random().toString(36).substring(2, 11),
           time: calculatedAverage,
           date: formatRecordDate(new Date()),
-          rating: ratingObj
+          rating: ratingObj,
+          hz: refreshRate
         };
 
         saveHistory([newRecord, ...history]);
@@ -277,7 +374,8 @@ export default function App() {
           id: Math.random().toString(36).substring(2, 11),
           time: calculatedAverage,
           date: formatRecordDate(new Date()),
-          rating: ratingObj
+          rating: ratingObj,
+          hz: refreshRate
         };
 
         saveHistory([newRecord, ...history]);
@@ -476,6 +574,40 @@ export default function App() {
         {/* Center / Left Panel Game space */}
         <div className="lg:col-span-2 flex flex-col gap-6">
           
+          {/* Refresh Rate Calibration Control */}
+          <div className="bg-slate-900/40 border border-slate-900 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+            <div className="flex items-center gap-2.5 font-sans">
+              <div className="p-1 px-2 rounded bg-cyan-400/10 text-cyan-400 text-[10px] font-mono border border-cyan-500/20 font-bold">
+                CALIBRATION
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-slate-200">基準リフレッシュレート設定</h4>
+                <p className="text-[10px] text-slate-500 font-medium mt-0.5">
+                  モニターの描画速度に合わせて判定基準を自動または手動で調整します
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2.5 self-start sm:self-auto">
+              {detectedHz !== null && (
+                <span className="text-[10px] font-mono font-bold text-slate-500 border border-slate-900 bg-slate-950/40 rounded-lg px-2 py-1 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 inline-block animate-pulse" />
+                  実測: <strong className="text-cyan-400 font-extrabold">{detectedHz}Hz</strong>
+                </span>
+              )}
+              <select
+                value={refreshRate}
+                onChange={(e) => changeRefreshRate(Number(e.target.value))}
+                className="bg-slate-950 border border-slate-800 text-cyan-400 font-mono text-xs rounded-xl px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-cyan-500 transition-all cursor-pointer hover:border-slate-700"
+              >
+                {[60, 75, 90, 120, 144, 165, 240, 280, 360, 500].map((hz) => (
+                  <option key={hz} value={hz}>
+                    {hz}Hz {hz === 240 ? "(240Hz基準)" : ""} {detectedHz !== null && Math.abs(detectedHz - hz) <= 15 ? "(自動検出)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           {/* Reaction Arena Card */}
           <div 
             id="reaction-arena-container"
@@ -698,7 +830,7 @@ export default function App() {
                             {reactionTime}
                           </span>
                           <span className="text-lg font-black font-mono tracking-wider ml-1.5 text-amber-400">
-                            ms
+                             ms
                           </span>
                         </div>
 
@@ -706,8 +838,8 @@ export default function App() {
                           <span className="text-[8px] font-mono font-bold text-slate-500 uppercase tracking-widest mb-1">
                             RANK
                           </span>
-                          <div className={`w-14 h-14 rounded-2xl border text-3xl font-black font-sans flex items-center justify-center ${getRank(reactionTime).color}`}>
-                            {getRank(reactionTime).name}
+                          <div className={`px-3 h-14 min-w-[5.5rem] rounded-2xl border text-[11px] md:text-xs font-bold font-sans flex items-center justify-center tracking-wide shadow-sm whitespace-nowrap ${getRank(reactionTime, refreshRate).color}`}>
+                            {getRank(reactionTime, refreshRate).name}({refreshRate}Hz基準)
                           </div>
                         </div>
                       </div>
@@ -926,7 +1058,8 @@ export default function App() {
                 <AnimatePresence initial={false}>
                   {history.map((item, index) => {
                     const playNum = attemptsCount - index;
-                    const rankInfo = getRank(item.time);
+                    const itemHz = item.hz || 240;
+                    const rankInfo = getRank(item.time, itemHz);
                     const isBest = bestTime !== null && item.time === bestTime;
                     
                     return (
@@ -965,15 +1098,15 @@ export default function App() {
                             </div>
                             <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono mt-1">
                               <Calendar className="w-3 h-3 text-slate-500" />
-                              <span className="tracking-tight">{item.date} {item.time}ms {rankInfo.name}</span>
+                              <span className="tracking-tight">{item.date} {item.time}ms {rankInfo.name}({itemHz}Hz基準)</span>
                             </div>
                           </div>
                         </div>
                         
                         {/* Evaluation rank badge */}
-                        <div className="flex items-center">
-                          <span className={`w-8 h-8 rounded-xl border font-black flex items-center justify-center text-xs shadow-sm ${rankInfo.color}`}>
-                            {rankInfo.name}
+                        <div className="flex items-center flex-shrink-0 ml-2">
+                          <span className={`px-2.5 py-1 min-w-[2.5rem] rounded-xl border font-bold flex items-center justify-center text-[9px] md:text-[10px] whitespace-nowrap shadow-sm tracking-tight ${rankInfo.color}`}>
+                            {rankInfo.name}({itemHz}Hz)
                           </span>
                         </div>
                       </motion.div>
