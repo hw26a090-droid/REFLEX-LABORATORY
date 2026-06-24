@@ -1056,6 +1056,11 @@ export default function App() {
                     <AlertCircle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
                     <span>フライングはお手つきとなり、1.0秒（1000ms）のペナルティが加算されます</span>
                   </div>
+
+                  {/* Tool Purpose Statement (FPS Warmup) */}
+                  <p className="text-[11px] sm:text-xs font-semibold text-cyan-400/80 mb-3.5 tracking-wider">
+                    FPSのウォームアップに。反応速度は鍛えると速くなる
+                  </p>
                   
                   <button
                     id="btn-start"
