@@ -125,6 +125,14 @@ const synth = new SoundSynthesizer();
 
 type CircleColor = "cyan" | "green" | "pink" | "yellow" | "white";
 
+type TrainingMode = "warmup" | "measure" | "train";
+
+const MODE_ROUNDS: Record<TrainingMode, number> = {
+  warmup: 3,
+  measure: 5,
+  train: 15,
+};
+
 const COLOR_PRESETS = [
   { id: "cyan" as CircleColor, name: "シアン", bgClass: "bg-cyan-400", textClass: "text-slate-950", borderClass: "border-cyan-400/20", pingBgClass: "bg-cyan-500/10", glowClass: "shadow-[0_0_50px_rgba(34,211,238,0.4)]" },
   { id: "green" as CircleColor, name: "緑", bgClass: "bg-emerald-400", textClass: "text-slate-950", borderClass: "border-emerald-400/20", pingBgClass: "bg-emerald-500/10", glowClass: "shadow-[0_0_50px_rgba(52,211,153,0.4)]" },
@@ -143,14 +151,15 @@ interface ScoreRecord {
 export default function App() {
   const [status, setStatus] = useState<GameState>(GameState.IDLE);
   const [isCircleVisible, setIsCircleVisible] = useState<boolean>(false);
-  const [reactionTime, setReactionTime] = useState<number | null>(null); // Stores average score of 5 rounds
+  const [reactionTime, setReactionTime] = useState<number | null>(null); // Stores average score of rounds
   const [history, setHistory] = useState<ScoreRecord[]>([]);
   const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false);
   const [sessionId, setSessionId] = useState<string>("RD-992-B");
   const [circleColor, setCircleColor] = useState<CircleColor>("cyan");
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
+  const [mode, setMode] = useState<TrainingMode>("measure");
 
-  // New states for the 5-round game mode
+  // New states for the game mode
   const [currentRound, setCurrentRound] = useState<number>(1);
   const [roundScores, setRoundScores] = useState<number[]>([]);
   const [lastRoundResult, setLastRoundResult] = useState<number | null>(null);
@@ -490,25 +499,27 @@ export default function App() {
       setStatus(GameState.RESULT);
       synth.playSuccess();
 
-      if (updatedScores.length < 5) {
+      if (updatedScores.length < MODE_ROUNDS[mode]) {
         // Automatically queue the next round after displaying intermediate round score for 1.5 seconds
         timeoutRef.current = window.setTimeout(() => {
           startNextRound(updatedScores.length + 1, updatedScores);
         }, 1500);
       } else {
-        // 5 Rounds completely finished. Calc average
+        // Rounds completely finished. Calc average
         const scoreSum = updatedScores.reduce((acc, c) => acc + c, 0);
-        const calculatedAverage = Math.round((scoreSum / 5) * 10) / 10;
+        const calculatedAverage = Math.round((scoreSum / MODE_ROUNDS[mode]) * 10) / 10;
         setReactionTime(calculatedAverage);
 
-        const newRecord: ScoreRecord = {
-          id: Math.random().toString(36).substring(2, 11),
-          time: calculatedAverage,
-          date: formatRecordDate(new Date()),
-          hz: refreshRate
-        };
+        if (mode === "measure") {
+          const newRecord: ScoreRecord = {
+            id: Math.random().toString(36).substring(2, 11),
+            time: calculatedAverage,
+            date: formatRecordDate(new Date()),
+            hz: refreshRate
+          };
 
-        saveHistory([newRecord, ...history]);
+          saveHistory([newRecord, ...history]);
+        }
       }
     } else if (status === GameState.WAITING) {
       // Early clicking before circle display is treated as "お手つき" with a penalty score of 1000ms.
@@ -526,24 +537,26 @@ export default function App() {
       setStatus(GameState.RESULT);
       synth.playFoul();
 
-      if (updatedScores.length < 5) {
+      if (updatedScores.length < MODE_ROUNDS[mode]) {
         timeoutRef.current = window.setTimeout(() => {
           startNextRound(updatedScores.length + 1, updatedScores);
         }, 1550); // Give a slightly longer gap for "お手つき" display so progress feels smooth
       } else {
-        // 5 Rounds completely finished with this foul
+        // Rounds completely finished with this foul
         const scoreSum = updatedScores.reduce((acc, c) => acc + c, 0);
-        const calculatedAverage = Math.round((scoreSum / 5) * 10) / 10;
+        const calculatedAverage = Math.round((scoreSum / MODE_ROUNDS[mode]) * 10) / 10;
         setReactionTime(calculatedAverage);
 
-        const newRecord: ScoreRecord = {
-          id: Math.random().toString(36).substring(2, 11),
-          time: calculatedAverage,
-          date: formatRecordDate(new Date()),
-          hz: refreshRate
-        };
+        if (mode === "measure") {
+          const newRecord: ScoreRecord = {
+            id: Math.random().toString(36).substring(2, 11),
+            time: calculatedAverage,
+            date: formatRecordDate(new Date()),
+            hz: refreshRate
+          };
 
-        saveHistory([newRecord, ...history]);
+          saveHistory([newRecord, ...history]);
+        }
       }
     }
   };
@@ -554,7 +567,7 @@ export default function App() {
       if (e.code === "Space") {
         e.preventDefault(); // prevent browser scrolling
         synth.unlock();
-        if (status === GameState.IDLE || (status === GameState.RESULT && roundScores.length === 5)) {
+        if (status === GameState.IDLE || (status === GameState.RESULT && roundScores.length === MODE_ROUNDS[mode])) {
           startFullGame();
         }
       }
@@ -563,7 +576,7 @@ export default function App() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [status, roundScores, startFullGame]);
+  }, [status, roundScores, startFullGame, mode]);
 
   // Clean timeouts on unmount
   useEffect(() => {
@@ -613,6 +626,21 @@ export default function App() {
       return { x, y, time: record.time, id: record.id, date: record.date, index: index + 1 };
     });
 
+    // Find the single best (fastest) index, selecting the newest one if tied
+    const bestIndex = points.reduce((bestIdx, current, idx) => {
+      if (bestIdx === -1) return idx;
+      if (current.time < points[bestIdx].time) {
+        return idx;
+      } else if (current.time === points[bestIdx].time) {
+        return idx; // tie-breaker: prefer newer (larger index)
+      }
+      return bestIdx;
+    }, -1);
+
+    // Calculate average score and its corresponding Y coordinate
+    const avgScoreValue = records.reduce((sum, r) => sum + r.time, 0) / records.length;
+    const avgY = paddingTop + ((avgScoreValue - minScore) / scoreRange) * chartHeight;
+
     const pathData = points.reduce((acc, p, index) => {
       return acc + (index === 0 ? `M ${p.x} ${p.y}` : ` L ${p.x} ${p.y}`);
     }, "");
@@ -622,12 +650,31 @@ export default function App() {
         <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
           {/* Horizontal Grid lines */}
           <line x1={paddingLeft} y1={paddingTop} x2={width - paddingRight} y2={paddingTop} stroke="#1e293b" strokeWidth="1" strokeDasharray="2,2" />
-          <line x1={paddingLeft} y1={paddingTop + chartHeight / 2} x2={width - paddingRight} y2={paddingTop + chartHeight / 2} stroke="#1e293b" strokeWidth="1" strokeDasharray="2,2" />
           <line x1={paddingLeft} y1={paddingTop + chartHeight} x2={width - paddingRight} y2={paddingTop + chartHeight} stroke="#334155" strokeWidth="1.5" />
+
+          {/* Average Line (Dashed) */}
+          <line
+            x1={paddingLeft}
+            y1={avgY}
+            x2={width - paddingRight}
+            y2={avgY}
+            stroke="#3f3f46"
+            strokeWidth="1.2"
+            strokeDasharray="3,3"
+          />
+          <text
+            x={width - paddingRight}
+            y={avgY - 4}
+            fill="#a1a1aa"
+            fontSize="8.5"
+            textAnchor="end"
+            className="font-sans font-bold select-none pointer-events-none"
+          >
+            平均: {Math.round(avgScoreValue)}ms
+          </text>
 
           {/* Axes labels (Upper is faster, Lower is slower) */}
           <text x={paddingLeft - 8} y={paddingTop + 4} fill="#22d3ee" fontSize="9" textAnchor="end" className="font-sans font-bold">{Math.round(minScore)}ms (速い)</text>
-          <text x={paddingLeft - 8} y={paddingTop + chartHeight / 2 + 4} fill="#64748b" fontSize="9" textAnchor="end" className="font-mono">{Math.round((maxScore + minScore) / 2)}ms</text>
           <text x={paddingLeft - 8} y={paddingTop + chartHeight + 4} fill="#f43f5e" fontSize="9" textAnchor="end" className="font-sans font-bold">{Math.round(maxScore)}ms (遅い)</text>
 
           {/* Line Path */}
@@ -649,54 +696,74 @@ export default function App() {
           />
 
           {/* Points dots */}
-          {points.map((p) => (
-            <g key={p.id} className="group cursor-pointer">
-              <circle
-                cx={p.x}
-                cy={p.y}
-                r="4.5"
-                fill="#020617"
-                stroke="#22d3ee"
-                strokeWidth="2.5"
-                className="transition-all duration-200 hover:r-5.5 hover:stroke-cyan-300"
-              />
-              {/* Custom dual-line tooltip on hover */}
-              <g className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none select-none">
-                <rect
-                  x={p.x - 55}
-                  y={p.y - 42}
-                  width="110"
-                  height="34"
-                  rx="6"
-                  fill="#090d16"
-                  stroke="#22d3ee"
-                  strokeWidth="1.5"
-                  className="shadow-lg"
+          {points.map((p, idx) => {
+            const isBest = idx === bestIndex;
+            return (
+              <g key={p.id} className="group cursor-pointer">
+                {isBest && (
+                  <text
+                    x={p.x}
+                    y={p.y - 11}
+                    fill="#f59e0b"
+                    fontSize="7"
+                    fontWeight="bold"
+                    textAnchor="middle"
+                    className="font-sans tracking-wider pointer-events-none select-none"
+                  >
+                    ★ BEST
+                  </text>
+                )}
+                <circle
+                  cx={p.x}
+                  cy={p.y}
+                  r={isBest ? "5.5" : "4.5"}
+                  fill="#020617"
+                  stroke={isBest ? "#f59e0b" : "#22d3ee"}
+                  strokeWidth={isBest ? "3" : "2.5"}
+                  className={`transition-all duration-200 ${
+                    isBest 
+                      ? "hover:r-[6.5px] hover:stroke-amber-400" 
+                      : "hover:r-[5.5px] hover:stroke-cyan-300"
+                  }`}
                 />
-                <text
-                  x={p.x}
-                  y={p.y - 29}
-                  fill="#ffffff"
-                  fontSize="9.5"
-                  fontWeight="bold"
-                  textAnchor="middle"
-                  className="font-sans"
-                >
-                  {p.index}回目: {Math.round(p.time)}ms
-                </text>
-                <text
-                  x={p.x}
-                  y={p.y - 17}
-                  fill="#64748b"
-                  fontSize="8"
-                  textAnchor="middle"
-                  className="font-mono"
-                >
-                  {p.date}
-                </text>
+                {/* Custom dual-line tooltip on hover */}
+                <g className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none select-none">
+                  <rect
+                    x={p.x - 55}
+                    y={p.y - 42}
+                    width="110"
+                    height="34"
+                    rx="6"
+                    fill="#090d16"
+                    stroke={isBest ? "#f59e0b" : "#22d3ee"}
+                    strokeWidth="1.5"
+                    className="shadow-lg"
+                  />
+                  <text
+                    x={p.x}
+                    y={p.y - 29}
+                    fill="#ffffff"
+                    fontSize="9.5"
+                    fontWeight="bold"
+                    textAnchor="middle"
+                    className="font-sans"
+                  >
+                    {p.index}回目: {Math.round(p.time)}ms
+                  </text>
+                  <text
+                    x={p.x}
+                    y={p.y - 17}
+                    fill="#64748b"
+                    fontSize="8"
+                    textAnchor="middle"
+                    className="font-mono"
+                  >
+                    {p.date}
+                  </text>
+                </g>
               </g>
-            </g>
-          ))}
+            );
+          })}
 
           {/* Gradient definitions */}
           <defs>
@@ -934,7 +1001,7 @@ export default function App() {
             {/* Current Round Badge */}
             {status !== GameState.IDLE && (
               <div className="absolute top-4 left-4 px-3 py-1 bg-zinc-950/90 border border-zinc-905 rounded-lg text-[10px] font-bold text-zinc-400 flex items-center gap-1.5 shadow-sm z-20">
-                <span>第 {currentRound} / 5 回の挑戦</span>
+                <span>第 {currentRound} / {MODE_ROUNDS[mode]} 回の挑戦</span>
               </div>
             )}
 
@@ -1043,7 +1110,7 @@ export default function App() {
                       </div>
                       <h4 className="text-xs font-bold text-zinc-200">記録を確認</h4>
                       <p className="text-[10px] text-zinc-400 mt-1 leading-tight font-medium">
-                        5回の平均タイムが記録に
+                        {MODE_ROUNDS[mode]}回の平均タイムが記録に
                       </p>
                       <span className="text-[9px] text-zinc-500 mt-2 block font-medium font-mono">
                         (測定単位: ミリ秒=1/1000秒)
@@ -1051,8 +1118,41 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Mode Selector Tabs */}
+                  <div className="flex p-1 bg-zinc-950/60 border border-zinc-900/80 rounded-xl mb-5 w-full max-w-sm relative">
+                    {[
+                      { id: "warmup" as TrainingMode, name: "ウォームアップ", rounds: 3 },
+                      { id: "measure" as TrainingMode, name: "計測 (本番)", rounds: 5 },
+                      { id: "train" as TrainingMode, name: "連続特訓", rounds: 15 },
+                    ].map((tab) => {
+                      const isActive = mode === tab.id;
+                      return (
+                        <button
+                          key={tab.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMode(tab.id);
+                          }}
+                          className={`flex-1 relative py-1.5 text-[11px] sm:text-xs font-bold rounded-lg transition-all cursor-pointer z-10 flex flex-col items-center justify-center ${
+                            isActive ? "text-cyan-400" : "text-zinc-500 hover:text-zinc-350"
+                          }`}
+                        >
+                          {isActive && (
+                            <motion.div
+                              layoutId="activeTabGlow"
+                              className="absolute inset-0 bg-cyan-950/30 border border-cyan-500/20 rounded-lg shadow-[0_0_15px_rgba(34,211,238,0.05)]"
+                              transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                            />
+                          )}
+                          <span>{tab.name}</span>
+                          <span className="text-[9px] opacity-75 mt-0.5 font-normal">({tab.rounds}回)</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
                   {/* Warning label */}
-                  <div className="flex items-center justify-center gap-1.5 text-[10px] sm:text-[11px] font-bold text-rose-400 bg-rose-950/10 border border-rose-950/20 rounded-xl px-4 py-2 mb-8 max-w-sm w-full mx-auto font-sans">
+                  <div className="flex items-center justify-center gap-1.5 text-[10px] sm:text-[11px] font-bold text-rose-400 bg-rose-950/10 border border-rose-950/20 rounded-xl px-4 py-2 mb-6 max-w-sm w-full mx-auto font-sans">
                     <AlertCircle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
                     <span>フライングはお手つきとなり、1.0秒（1000ms）のペナルティが加算されます</span>
                   </div>
@@ -1071,9 +1171,21 @@ export default function App() {
                     }}
                     className="group relative inline-flex items-center gap-2 px-8 py-3.5 bg-cyan-500 hover:bg-cyan-400 font-bold text-slate-950 rounded-xl transition-all duration-200 cursor-pointer active:scale-97 text-xs"
                   >
-                    <span>測定開始</span>
+                    <span>
+                      {mode === "warmup" && "ウォームアップを開始する (3ラウンド)"}
+                      {mode === "measure" && "測定を開始する (5ラウンド)"}
+                      {mode === "train" && "連続特訓を開始する (15ラウンド)"}
+                    </span>
                     <Sparkles className="w-4 h-4 text-slate-950" />
                   </button>
+
+                  {/* Non-saving notice for training/warmup mode */}
+                  {mode !== "measure" && (
+                    <p className="text-[10px] text-zinc-500 font-medium mt-2.5 tracking-wider">
+                      ※このモードの記録はグラフに保存されません
+                    </p>
+                  )}
+
                   <p className="text-[10px] text-zinc-500 tracking-wider mt-5">
                     またはキーボードの [ スペース ] キーでも開始できます
                   </p>
@@ -1097,12 +1209,12 @@ export default function App() {
               {/* RESULT State View */}
               {status === GameState.RESULT && (
                 <>
-                  {/* Case A: Between rounds (1st to 4th round result) */}
-                  {roundScores.length < 5 && lastRoundResult !== null && (
+                  {/* Case A: Between rounds (1st to N-1 round result) */}
+                  {roundScores.length < MODE_ROUNDS[mode] && lastRoundResult !== null && reactionTime === null && (
                     <motion.div 
                       initial={{ opacity: 0, scale: 0.94 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      className="flex flex-col items-center"
+                      className="flex flex-col items-center w-full max-w-sm sm:max-w-md"
                     >
                       <span className="text-[10px] font-bold text-zinc-500 tracking-wider mb-2">
                         {roundScores.length}回目の測定結果
@@ -1135,7 +1247,7 @@ export default function App() {
                       )}
                       
                       {/* Automatic countdown loader */}
-                      <div className="mt-4 flex flex-col items-center gap-2">
+                      <div className="mt-4 flex flex-col items-center gap-2 w-full">
                         <div className="flex items-center gap-1.5 text-xs text-zinc-400 font-medium">
                           <span>自動的に次の挑戦に進みます...</span>
                         </div>
@@ -1148,11 +1260,47 @@ export default function App() {
                           />
                         </div>
                       </div>
+
+                      {/* 途中経過の測定タイム一覧 */}
+                      <div className="w-full max-w-sm mt-6 bg-zinc-950/40 border border-zinc-900/60 rounded-2xl p-3 text-left">
+                        <div className={`grid ${mode === 'warmup' ? 'grid-cols-3' : 'grid-cols-5'} gap-1.5`}>
+                          {Array.from({ length: MODE_ROUNDS[mode] }).map((_, idx) => {
+                            const isCompleted = idx < roundScores.length;
+                            if (isCompleted) {
+                              const score = roundScores[idx];
+                              const isFoul = foulRounds.includes(idx);
+                              if (isFoul) {
+                                return (
+                                  <div key={idx} className="flex flex-col items-center bg-rose-950/15 border border-rose-500/10 rounded-lg py-1.5 px-0.5 text-center">
+                                    <span className="text-[8px] font-mono font-bold text-rose-500/80 mb-0.5">#{idx + 1}</span>
+                                    <span className="text-[8px] font-bold text-rose-450 tracking-tighter">お手つき</span>
+                                  </div>
+                                );
+                              }
+                              return (
+                                <div key={idx} className="flex flex-col items-center bg-cyan-950/10 border border-cyan-500/10 rounded-lg py-1.5 px-0.5 text-center">
+                                  <span className="text-[8px] font-mono font-bold text-cyan-500/80 mb-0.5">#{idx + 1}</span>
+                                  <span className="text-[10px] font-bold font-mono text-cyan-300">{score}</span>
+                                  <span className="text-[7px] font-mono text-cyan-500/60 leading-none">ms</span>
+                                </div>
+                              );
+                            }
+                            // 未測定スロット
+                            return (
+                              <div key={idx} className="flex flex-col items-center bg-zinc-900/10 border border-zinc-800/20 rounded-lg py-1.5 px-0.5 text-center opacity-30">
+                                <span className="text-[8px] font-mono font-bold text-zinc-600 mb-0.5">#{idx + 1}</span>
+                                <span className="text-[10px] font-bold font-mono text-zinc-500">-</span>
+                                <span className="text-[7px] font-mono text-zinc-650/60 leading-none">-</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </motion.div>
                   )}
 
-                  {/* Case B: Final scores calculation (All 5 rounds complete) */}
-                  {roundScores.length === 5 && reactionTime !== null && (
+                  {/* Case B: Final scores calculation (All rounds complete) */}
+                  {roundScores.length === MODE_ROUNDS[mode] && reactionTime !== null && (
                     <motion.div 
                       initial={{ opacity: 0, scale: 0.94 }}
                       animate={{ opacity: 1, scale: 1 }}
@@ -1164,7 +1312,7 @@ export default function App() {
                       </div>
                       
                       <span className="text-[10px] font-bold text-zinc-500 tracking-wider uppercase mb-1">
-                        5回の平均タイム（今回の成績）
+                        {MODE_ROUNDS[mode]}回の平均タイム（今回の成績）
                       </span>
 
                       {/* Giant Average Reaction value & Evaluation Rank Badge */}
@@ -1188,12 +1336,19 @@ export default function App() {
                         </div>
                       </div>
 
+                      {/* Non-saving notice for training/warmup mode on results */}
+                      {mode !== "measure" && (
+                        <p className="text-[10px] text-zinc-500 font-medium mb-4.5 tracking-wider">
+                          ※このモードの記録はグラフに保存されません
+                        </p>
+                      )}
+
                       {/* Details of individual rounds */}
                       <div className="w-full bg-zinc-950/60 border border-zinc-900 rounded-2xl p-4 mb-6 text-left">
                         <h4 className="text-[10px] font-bold text-zinc-400 mb-3 flex items-center justify-between border-b border-zinc-900 pb-2">
-                          <span>5回の測定タイム一覧</span>
+                          <span>{MODE_ROUNDS[mode]}回の測定タイム一覧</span>
                         </h4>
-                        <div className="grid grid-cols-5 gap-2">
+                        <div className={`grid ${mode === 'warmup' ? 'grid-cols-3' : 'grid-cols-5'} gap-2`}>
                           {roundScores.map((score, idx) => {
                             const isFoul = foulRounds.includes(idx);
                             if (isFoul) {
@@ -1324,7 +1479,7 @@ export default function App() {
             <div className="bg-zinc-900/30 border border-zinc-900 rounded-2xl p-4 shadow-sm relative">
               <div className="flex justify-between items-center mb-1">
                 <span className="text-[10px] font-bold tracking-wider text-zinc-500">今までの平均タイム</span>
-                <TrendingUp className="w-3.5 h-3.5 text-cyan-400" />
+                <Timer className="w-3.5 h-3.5 text-cyan-400" />
               </div>
               <div className="flex items-baseline mt-2">
                 <span className="text-2xl font-bold font-mono tracking-tight text-white select-all">
@@ -1368,20 +1523,48 @@ export default function App() {
           </div>
 
           {/* Graph Progress (Cyber Theme) */}
-          {history.length >= 2 && (
-            <div className="bg-zinc-900/30 border border-zinc-900 rounded-2xl p-5 shadow-sm">
-              <div className="flex justify-between items-center mb-4">
-                <h4 className="text-[10px] font-bold text-zinc-400 tracking-wider flex items-center gap-2">
-                  <Activity className="w-4 h-4 text-cyan-400" />
-                  反応スピードの推移グラフ
-                </h4>
-                <span className="text-[9px] text-zinc-500 font-medium">※上に行くほど速くて優秀！</span>
+          {history.length >= 2 && (() => {
+            const recordsForDiff = [...history].reverse(); // oldest to newest
+            const latest = recordsForDiff[recordsForDiff.length - 1];
+            const prev = recordsForDiff[recordsForDiff.length - 2];
+            const rawDiff = prev ? latest.time - prev.time : null;
+            const diffValue = rawDiff !== null ? Math.round(rawDiff * 10) / 10 : null;
+
+            return (
+              <div className="bg-zinc-900/30 border border-zinc-900 rounded-2xl p-5 shadow-sm">
+                <div className="flex justify-between items-center mb-2.5">
+                  <h4 className="text-[10px] font-bold text-zinc-400 tracking-wider flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-cyan-400" />
+                    反応スピードの推移グラフ
+                  </h4>
+                  <span className="text-[9px] text-zinc-500 font-medium">※上に行くほど速くて優秀！</span>
+                </div>
+
+                {/* 前回比の差分表示エリア（タイトルの下、グラフエリアの真上） */}
+                {diffValue !== null && (
+                  <div className="mb-3.5 text-left pl-1">
+                    {diffValue < 0 ? (
+                      <span className="text-[11px] font-bold text-cyan-400 tracking-wide inline-flex items-center gap-1 font-sans">
+                        前回比 {diffValue}ms ↑
+                      </span>
+                    ) : diffValue > 0 ? (
+                      <span className="text-[11px] font-bold text-zinc-500 tracking-wide inline-flex items-center gap-1 font-sans">
+                        前回比 +{diffValue}ms ↓
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-bold text-zinc-500 tracking-wide inline-flex items-center gap-1 font-sans">
+                        前回比 ±0ms
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                <div className="aspect-[16/10] w-full flex items-center justify-center p-2.5 bg-zinc-950/60 rounded-xl border border-zinc-900/80">
+                  {renderSvgGraph()}
+                </div>
               </div>
-              <div className="aspect-[16/10] w-full flex items-center justify-center p-2.5 bg-zinc-950/60 rounded-xl border border-zinc-900/80">
-                {renderSvgGraph()}
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Score History List Card */}
           <div className="bg-zinc-900/30 border border-zinc-900 rounded-2xl shadow-sm overflow-hidden flex flex-col max-h-[460px]">
