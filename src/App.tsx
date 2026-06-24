@@ -594,7 +594,7 @@ export default function App() {
 
     const width = 500;
     const height = 150;
-    const paddingLeft = 35;
+    const paddingLeft = 85; // Increased to comfortably fit labels like "120ms (速い)"
     const paddingRight = 15;
     const paddingTop = 15;
     const paddingBottom = 20;
@@ -606,12 +606,11 @@ export default function App() {
     const maxScore = Math.max(...records.map(r => r.time));
     const scoreRange = maxScore - minScore === 0 ? 100 : maxScore - minScore;
 
-    // Create coordinates
+    // Create coordinates: "Faster is higher", so smaller values are mapped near paddingTop
     const points = records.map((record, index) => {
       const x = paddingLeft + (index / (records.length - 1)) * chartWidth;
-      // y is inverted because SVG origin 0,0 is at top left
-      const y = paddingTop + chartHeight - ((record.time - minScore) / scoreRange) * chartHeight;
-      return { x, y, time: record.time, id: record.id };
+      const y = paddingTop + ((record.time - minScore) / scoreRange) * chartHeight;
+      return { x, y, time: record.time, id: record.id, date: record.date, index: index + 1 };
     });
 
     const pathData = points.reduce((acc, p, index) => {
@@ -626,10 +625,10 @@ export default function App() {
           <line x1={paddingLeft} y1={paddingTop + chartHeight / 2} x2={width - paddingRight} y2={paddingTop + chartHeight / 2} stroke="#1e293b" strokeWidth="1" strokeDasharray="2,2" />
           <line x1={paddingLeft} y1={paddingTop + chartHeight} x2={width - paddingRight} y2={paddingTop + chartHeight} stroke="#334155" strokeWidth="1.5" />
 
-          {/* Axes labels */}
-          <text x={paddingLeft - 8} y={paddingTop + 4} fill="#64748b" fontSize="9" textAnchor="end" className="font-mono">{Math.round(maxScore)}</text>
-          <text x={paddingLeft - 8} y={paddingTop + chartHeight / 2 + 4} fill="#64748b" fontSize="9" textAnchor="end" className="font-mono">{Math.round((maxScore + minScore) / 2)}</text>
-          <text x={paddingLeft - 8} y={paddingTop + chartHeight + 4} fill="#64748b" fontSize="9" textAnchor="end" className="font-mono">{Math.round(minScore)}</text>
+          {/* Axes labels (Upper is faster, Lower is slower) */}
+          <text x={paddingLeft - 8} y={paddingTop + 4} fill="#22d3ee" fontSize="9" textAnchor="end" className="font-sans font-bold">{Math.round(minScore)}ms (速い)</text>
+          <text x={paddingLeft - 8} y={paddingTop + chartHeight / 2 + 4} fill="#64748b" fontSize="9" textAnchor="end" className="font-mono">{Math.round((maxScore + minScore) / 2)}ms</text>
+          <text x={paddingLeft - 8} y={paddingTop + chartHeight + 4} fill="#f43f5e" fontSize="9" textAnchor="end" className="font-sans font-bold">{Math.round(maxScore)}ms (遅い)</text>
 
           {/* Line Path */}
           <path
@@ -655,34 +654,47 @@ export default function App() {
               <circle
                 cx={p.x}
                 cy={p.y}
-                r="4"
+                r="4.5"
                 fill="#020617"
                 stroke="#22d3ee"
-                strokeWidth="2"
-                className="transition-all duration-200 hover:r-5 hover:stroke-cyan-300"
+                strokeWidth="2.5"
+                className="transition-all duration-200 hover:r-5.5 hover:stroke-cyan-300"
               />
-              {/* Tooltip on hovering point */}
-              <rect
-                x={p.x - 22}
-                y={p.y - 28}
-                width="44"
-                height="18"
-                rx="4"
-                fill="#0f172a"
-                stroke="#334155"
-                strokeWidth="1"
-                className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none"
-              />
-              <text
-                x={p.x}
-                y={p.y - 16}
-                fill="#38bdf8"
-                fontSize="9"
-                textAnchor="middle"
-                className="opacity-0 group-hover:opacity-100 font-mono font-bold transition-opacity duration-150 pointer-events-none"
-              >
-                {Math.round(p.time)}
-              </text>
+              {/* Custom dual-line tooltip on hover */}
+              <g className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none select-none">
+                <rect
+                  x={p.x - 55}
+                  y={p.y - 42}
+                  width="110"
+                  height="34"
+                  rx="6"
+                  fill="#090d16"
+                  stroke="#22d3ee"
+                  strokeWidth="1.5"
+                  className="shadow-lg"
+                />
+                <text
+                  x={p.x}
+                  y={p.y - 29}
+                  fill="#ffffff"
+                  fontSize="9.5"
+                  fontWeight="bold"
+                  textAnchor="middle"
+                  className="font-sans"
+                >
+                  {p.index}回目: {Math.round(p.time)}ms
+                </text>
+                <text
+                  x={p.x}
+                  y={p.y - 17}
+                  fill="#64748b"
+                  fontSize="8"
+                  textAnchor="middle"
+                  className="font-mono"
+                >
+                  {p.date}
+                </text>
+              </g>
             </g>
           ))}
 
@@ -1288,7 +1300,7 @@ export default function App() {
                     <span>手元に保存する</span>
                   </a>
                   <a
-                    href="/reflex-test-standalone.html"
+                    href="/"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 hover:border-zinc-700 text-[11px] font-bold rounded-lg transition-all cursor-pointer"
@@ -1358,7 +1370,7 @@ export default function App() {
                   <Activity className="w-4 h-4 text-cyan-400" />
                   反応スピードの推移グラフ
                 </h4>
-                <span className="text-[9px] text-zinc-500 font-medium">※下に行くほど速くて優秀！</span>
+                <span className="text-[9px] text-zinc-500 font-medium">※上に行くほど速くて優秀！</span>
               </div>
               <div className="aspect-[16/10] w-full flex items-center justify-center p-2.5 bg-zinc-950/60 rounded-xl border border-zinc-900/80">
                 {renderSvgGraph()}
