@@ -37,6 +37,7 @@ const copyToStandalone = () => ({
 
 export default defineConfig(() => {
   return {
+    base: process.env.GITHUB_ACTIONS ? '/REFLEX-LABORATORY/' : '/',
     plugins: [
       react(),
       tailwindcss(),
