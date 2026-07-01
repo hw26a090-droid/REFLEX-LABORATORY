@@ -149,6 +149,7 @@ interface ScoreRecord {
 }
 
 export default function App() {
+  const isStandalone = typeof window !== "undefined" && (window.location.protocol === "file:" || window.location.pathname.includes("reflex-test-standalone.html"));
   const [status, setStatus] = useState<GameState>(GameState.IDLE);
   const [isCircleVisible, setIsCircleVisible] = useState<boolean>(false);
   const [reactionTime, setReactionTime] = useState<number | null>(null); // Stores average score of rounds
@@ -1437,40 +1438,42 @@ export default function App() {
           </div>
 
           {/* Standalone Game Download Card */}
-          <div className="bg-gradient-to-br from-slate-900/80 to-slate-950/80 border border-cyan-500/30 rounded-2xl p-5 shadow-[0_0_20px_rgba(34,211,238,0.05)] relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 blur-xl rounded-full pointer-events-none" />
-            <div className="flex items-start gap-3.5">
-              <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
-                <FileCode className="w-5 h-5" />
-              </div>
-              <div className="flex-1">
-                <h4 className="text-xs font-black tracking-wider text-slate-200 uppercase font-sans">
-                  ネット不要で遊べる特別版 (ワンファイルHTML)
-                </h4>
-                <p className="text-[10px] text-slate-400 mt-1 leading-normal font-medium">
-                  インターネットが繋がっていなくても、端末の中に保存して誤差なくきれいに動く、便利なファイルを丸ごと手元に保存できます。
-                </p>
-                <div className="mt-3.5 flex flex-wrap gap-2">
-                  <a
-                    href="/reflex-test-standalone.html"
-                    download="reflex-test-standalone.html"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-[11px] font-bold rounded-lg transition-all cursor-pointer active:scale-95"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>手元に保存する</span>
-                  </a>
-                  <a
-                    href="/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 hover:border-zinc-700 text-[11px] font-bold rounded-lg transition-all cursor-pointer"
-                  >
-                    <span>別画面でひろびろ遊ぶ</span>
-                  </a>
+          {!isStandalone && (
+            <div className="bg-gradient-to-br from-slate-900/80 to-slate-950/80 border border-cyan-500/30 rounded-2xl p-5 shadow-[0_0_20px_rgba(34,211,238,0.05)] relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 blur-xl rounded-full pointer-events-none" />
+              <div className="flex items-start gap-3.5">
+                <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
+                  <FileCode className="w-5 h-5" />
+                </div>
+                <div className="flex-1">
+                  <h4 className="text-xs font-black tracking-wider text-slate-200 uppercase font-sans">
+                    ネット不要で遊べる特別版 (ワンファイルHTML)
+                  </h4>
+                  <p className="text-[10px] text-slate-400 mt-1 leading-normal font-medium">
+                    インターネットが繋がっていなくても、端末の中に保存して誤差なくきれいに動く、便利なファイルを丸ごと手元に保存できます。
+                  </p>
+                  <div className="mt-3.5 flex flex-wrap gap-2">
+                    <a
+                      href="/reflex-test-standalone.html"
+                      download="reflex-test-standalone.html"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-[11px] font-bold rounded-lg transition-all cursor-pointer active:scale-95"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>手元に保存する</span>
+                    </a>
+                    <a
+                      href="/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 hover:border-zinc-700 text-[11px] font-bold rounded-lg transition-all cursor-pointer"
+                    >
+                      <span>別画面でひろびろ遊ぶ</span>
+                    </a>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Quick Stats Grid with cyan accents */}
           <div className="grid grid-cols-2 gap-4">
