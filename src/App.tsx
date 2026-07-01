@@ -149,7 +149,11 @@ interface ScoreRecord {
 }
 
 export default function App() {
-  const isStandalone = typeof window !== "undefined" && (window.location.protocol === "file:" || window.location.pathname.includes("reflex-test-standalone.html"));
+  const isAiStudioPreview = typeof window !== "undefined" && (
+    window.location.hostname.includes("run.app") ||
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1"
+  );
   const [status, setStatus] = useState<GameState>(GameState.IDLE);
   const [isCircleVisible, setIsCircleVisible] = useState<boolean>(false);
   const [reactionTime, setReactionTime] = useState<number | null>(null); // Stores average score of rounds
@@ -1438,7 +1442,7 @@ export default function App() {
           </div>
 
           {/* Standalone Game Download Card */}
-          {!isStandalone && (
+          {isAiStudioPreview && (
             <div className="bg-gradient-to-br from-slate-900/80 to-slate-950/80 border border-cyan-500/30 rounded-2xl p-5 shadow-[0_0_20px_rgba(34,211,238,0.05)] relative overflow-hidden">
               <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 blur-xl rounded-full pointer-events-none" />
               <div className="flex items-start gap-3.5">
