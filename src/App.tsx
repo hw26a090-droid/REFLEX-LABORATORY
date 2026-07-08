@@ -125,12 +125,13 @@ const synth = new SoundSynthesizer();
 
 type CircleColor = "cyan" | "green" | "pink" | "yellow" | "white";
 
-type TrainingMode = "warmup" | "measure" | "train";
+type TrainingMode = "warmup" | "measure" | "train" | "check";
 
 const MODE_ROUNDS: Record<TrainingMode, number> = {
   warmup: 3,
   measure: 5,
   train: 15,
+  check: 5,
 };
 
 const COLOR_PRESETS = [
@@ -163,6 +164,24 @@ export default function App() {
   const [circleColor, setCircleColor] = useState<CircleColor>("cyan");
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [mode, setMode] = useState<TrainingMode>("measure");
+
+  // States for effect check mode
+  const [checkPhase, setCheckPhase] = useState<"none" | "before_intro" | "before" | "warmup_intro" | "warmup" | "after_intro" | "after" | "result">("none");
+  const [checkBeforeScores, setCheckBeforeScores] = useState<number[]>([]);
+  const [checkWarmupScores, setCheckWarmupScores] = useState<number[]>([]);
+  const [checkAfterScores, setCheckAfterScores] = useState<number[]>([]);
+  const [checkBeforeAvg, setCheckBeforeAvg] = useState<number | null>(null);
+  const [checkWarmupAvg, setCheckWarmupAvg] = useState<number | null>(null);
+  const [checkAfterAvg, setCheckAfterAvg] = useState<number | null>(null);
+
+  const getMaxRounds = useCallback(() => {
+    if (mode === "check") {
+      if (checkPhase === "before" || checkPhase === "after") return 5;
+      if (checkPhase === "warmup") return 3;
+      return 5;
+    }
+    return MODE_ROUNDS[mode];
+  }, [mode, checkPhase]);
 
   // New states for the game mode
   const [currentRound, setCurrentRound] = useState<number>(1);
@@ -435,7 +454,17 @@ export default function App() {
     setFoulRounds([]);
     setReactionTime(null);
     setIsCircleVisible(false);
-  }, []);
+
+    if (mode === "check") {
+      setCheckPhase("before_intro");
+      setCheckBeforeAvg(null);
+      setCheckAfterAvg(null);
+      setCheckWarmupAvg(null);
+      setCheckBeforeScores([]);
+      setCheckWarmupScores([]);
+      setCheckAfterScores([]);
+    }
+  }, [mode]);
 
   // Starts a completely new 5-round testing play session
   const startFullGame = useCallback(() => {
@@ -448,6 +477,19 @@ export default function App() {
     setLastRoundResult(null);
     setFoulRounds([]);
     setReactionTime(null);
+
+    if (mode === "check") {
+      let nextPhase: typeof checkPhase = "before";
+      if (checkPhase === "before_intro" || checkPhase === "result" || checkPhase === "none") {
+        nextPhase = "before";
+      } else if (checkPhase === "warmup_intro") {
+        nextPhase = "warmup";
+      } else if (checkPhase === "after_intro") {
+        nextPhase = "after";
+      }
+      setCheckPhase(nextPhase);
+    }
+
     setIsCircleVisible(true); // Show candidate circle container during waiting
     setStatus(GameState.WAITING);
 
@@ -461,7 +503,7 @@ export default function App() {
         setStatus(GameState.ACTIVE);
       });
     }, randomDelay);
-  }, []);
+  }, [mode, checkPhase]);
 
   // Starts the next round within the ongoing session
   const startNextRound = useCallback((nextRoundIndex: number, currentScores: number[]) => {
@@ -485,6 +527,37 @@ export default function App() {
     }, randomDelay);
   }, []);
 
+  // Transition between check mode phases
+  const proceedToCheckNextPhase = useCallback(() => {
+    if (mode !== "check") return;
+
+    if (checkPhase === "before") {
+      setCheckPhase("warmup_intro");
+      setStatus(GameState.IDLE);
+      setCurrentRound(1);
+      setRoundScores([]);
+      setLastRoundResult(null);
+      setFoulRounds([]);
+      setReactionTime(null);
+    } else if (checkPhase === "warmup") {
+      setCheckPhase("after_intro");
+      setStatus(GameState.IDLE);
+      setCurrentRound(1);
+      setRoundScores([]);
+      setLastRoundResult(null);
+      setFoulRounds([]);
+      setReactionTime(null);
+    } else if (checkPhase === "after") {
+      setCheckPhase("result");
+      setStatus(GameState.IDLE);
+      setCurrentRound(1);
+      setRoundScores([]);
+      setLastRoundResult(null);
+      setFoulRounds([]);
+      setReactionTime(null);
+    }
+  }, [mode, checkPhase]);
+
   // Core Game: Handles pointer interactions
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     // Avoid double triggering
@@ -504,7 +577,7 @@ export default function App() {
       setStatus(GameState.RESULT);
       synth.playSuccess();
 
-      if (updatedScores.length < MODE_ROUNDS[mode]) {
+      if (updatedScores.length < getMaxRounds()) {
         // Automatically queue the next round after displaying intermediate round score for 1.5 seconds
         timeoutRef.current = window.setTimeout(() => {
           startNextRound(updatedScores.length + 1, updatedScores);
@@ -512,8 +585,21 @@ export default function App() {
       } else {
         // Rounds completely finished. Calc average
         const scoreSum = updatedScores.reduce((acc, c) => acc + c, 0);
-        const calculatedAverage = Math.round((scoreSum / MODE_ROUNDS[mode]) * 10) / 10;
+        const calculatedAverage = Math.round((scoreSum / getMaxRounds()) * 10) / 10;
         setReactionTime(calculatedAverage);
+
+        if (mode === "check") {
+          if (checkPhase === "before") {
+            setCheckBeforeAvg(calculatedAverage);
+            setCheckBeforeScores(updatedScores);
+          } else if (checkPhase === "warmup") {
+            setCheckWarmupAvg(calculatedAverage);
+            setCheckWarmupScores(updatedScores);
+          } else if (checkPhase === "after") {
+            setCheckAfterAvg(calculatedAverage);
+            setCheckAfterScores(updatedScores);
+          }
+        }
 
         if (mode === "measure") {
           const newRecord: ScoreRecord = {
@@ -542,15 +628,28 @@ export default function App() {
       setStatus(GameState.RESULT);
       synth.playFoul();
 
-      if (updatedScores.length < MODE_ROUNDS[mode]) {
+      if (updatedScores.length < getMaxRounds()) {
         timeoutRef.current = window.setTimeout(() => {
           startNextRound(updatedScores.length + 1, updatedScores);
         }, 1550); // Give a slightly longer gap for "お手つき" display so progress feels smooth
       } else {
         // Rounds completely finished with this foul
         const scoreSum = updatedScores.reduce((acc, c) => acc + c, 0);
-        const calculatedAverage = Math.round((scoreSum / MODE_ROUNDS[mode]) * 10) / 10;
+        const calculatedAverage = Math.round((scoreSum / getMaxRounds()) * 10) / 10;
         setReactionTime(calculatedAverage);
+
+        if (mode === "check") {
+          if (checkPhase === "before") {
+            setCheckBeforeAvg(calculatedAverage);
+            setCheckBeforeScores(updatedScores);
+          } else if (checkPhase === "warmup") {
+            setCheckWarmupAvg(calculatedAverage);
+            setCheckWarmupScores(updatedScores);
+          } else if (checkPhase === "after") {
+            setCheckAfterAvg(calculatedAverage);
+            setCheckAfterScores(updatedScores);
+          }
+        }
 
         if (mode === "measure") {
           const newRecord: ScoreRecord = {
@@ -572,8 +671,14 @@ export default function App() {
       if (e.code === "Space") {
         e.preventDefault(); // prevent browser scrolling
         synth.unlock();
-        if (status === GameState.IDLE || (status === GameState.RESULT && roundScores.length === MODE_ROUNDS[mode])) {
+        if (status === GameState.IDLE) {
           startFullGame();
+        } else if (status === GameState.RESULT) {
+          if (mode === "check" && roundScores.length === getMaxRounds()) {
+            proceedToCheckNextPhase();
+          } else if (roundScores.length === getMaxRounds()) {
+            startFullGame();
+          }
         }
       }
     };
@@ -581,7 +686,7 @@ export default function App() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [status, roundScores, startFullGame, mode]);
+  }, [status, roundScores, startFullGame, mode, getMaxRounds, proceedToCheckNextPhase]);
 
   // Clean timeouts on unmount
   useEffect(() => {
@@ -1005,8 +1110,8 @@ export default function App() {
           >
             {/* Current Round Badge */}
             {status !== GameState.IDLE && (
-              <div className="absolute top-4 left-4 px-3 py-1 bg-zinc-950/90 border border-zinc-905 rounded-lg text-[10px] font-bold text-zinc-400 flex items-center gap-1.5 shadow-sm z-20">
-                <span>第 {currentRound} / {MODE_ROUNDS[mode]} 回の挑戦</span>
+              <div className="absolute top-4 left-4 px-3 py-1 bg-zinc-950/90 border border-zinc-900 rounded-lg text-[10px] font-bold text-zinc-400 flex items-center gap-1.5 shadow-sm z-20">
+                <span>第 {currentRound} / {getMaxRounds()} 回の挑戦</span>
               </div>
             )}
 
@@ -1062,66 +1167,267 @@ export default function App() {
             <div className="flex flex-col items-center p-5 text-center max-w-lg w-full relative z-20 pointer-events-auto">
               
               {/* IDLE State View */}
-              {status === GameState.IDLE && (
+              {status === GameState.IDLE && mode === "check" && checkPhase === "result" ? (
+                /* 効果チェックの最終結果画面 */
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.96 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="flex flex-col items-center w-full max-w-md mx-auto"
+                >
+                  <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 mb-4">
+                    <Activity className="w-6 h-6 text-cyan-400" />
+                  </div>
+                  
+                  <h3 className="text-base font-bold text-zinc-100 mb-5 tracking-wider font-sans">
+                    反応速度 効果チェック結果
+                  </h3>
+
+                  {/* Comparison stats */}
+                  <div className="grid grid-cols-2 gap-3.5 w-full mb-4">
+                    <div className="bg-[#0e0e11] border border-zinc-900 rounded-2xl p-4 flex flex-col items-center text-center">
+                      <span className="text-[10px] font-bold text-zinc-500 tracking-wider mb-1">
+                        BEFORE (測定前平均)
+                      </span>
+                      <div className="flex items-baseline text-zinc-300 mt-1">
+                        <span className="text-3xl font-bold font-mono tracking-tight">{checkBeforeAvg}</span>
+                        <span className="text-xs font-bold ml-1 text-zinc-500">ms</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#0e0e11] border border-zinc-900 rounded-2xl p-4 flex flex-col items-center text-center">
+                      <span className="text-[10px] font-bold text-zinc-500 tracking-wider mb-1">
+                        AFTER (測定後平均)
+                      </span>
+                      <div className="flex items-baseline text-zinc-100 mt-1">
+                        <span className="text-3xl font-bold font-mono tracking-tight text-emerald-400">{checkAfterAvg}</span>
+                        <span className="text-xs font-bold ml-1 text-zinc-500">ms</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Difference badge */}
+                  {(() => {
+                    const diff = checkAfterAvg! - checkBeforeAvg!;
+                    const roundedDiff = Math.round(diff * 10) / 10;
+                    const improved = roundedDiff < 0;
+                    const absDiff = Math.abs(roundedDiff);
+                    
+                    return (
+                      <div className="w-full bg-zinc-950/80 border border-zinc-900 rounded-2xl p-5 mb-5 text-center">
+                        <span className="text-[10px] font-bold text-zinc-500 tracking-wider uppercase block mb-2">
+                          反応速度の変化
+                        </span>
+                        <div className="flex items-center justify-center">
+                          <div className="flex items-baseline font-sans">
+                            <span className="text-[11px] font-bold text-zinc-500 mr-2.5">差分:</span>
+                            {improved ? (
+                              <>
+                                <span className="text-4xl font-extrabold font-mono text-cyan-400">-{absDiff}</span>
+                                <span className="text-base font-bold ml-1 text-cyan-400">ms</span>
+                                <span className="text-xs font-bold ml-3 px-2 py-0.5 rounded bg-cyan-950/30 border border-cyan-500/20 text-cyan-400 font-sans tracking-wide">
+                                  短縮
+                                </span>
+                              </>
+                            ) : roundedDiff > 0 ? (
+                              <>
+                                <span className="text-4xl font-extrabold font-mono text-zinc-500">+{absDiff}</span>
+                                <span className="text-base font-bold ml-1 text-zinc-500">ms</span>
+                                <span className="text-xs font-bold ml-3 px-2 py-0.5 rounded bg-zinc-900/40 border border-zinc-800 text-zinc-400 font-sans tracking-wide">
+                                  増加
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="text-4xl font-extrabold font-mono text-zinc-500">±0</span>
+                                <span className="text-base font-bold ml-1 text-zinc-500">ms</span>
+                                <span className="text-xs font-bold ml-3 px-2 py-0.5 rounded bg-zinc-900/40 border border-zinc-800 text-zinc-400 font-sans tracking-wide">
+                                  変化なし
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Disclaimer */}
+                  <p className="text-[10px] text-zinc-500 font-medium leading-normal mb-6 text-center max-w-sm">
+                    ※短時間の改善には課題への慣れも含まれます
+                  </p>
+
+                  {/* Actions */}
+                  <div className="flex gap-3 w-full justify-center">
+                    <button
+                      onClick={() => {
+                        setCheckBeforeAvg(null);
+                        setCheckAfterAvg(null);
+                        setCheckWarmupAvg(null);
+                        setCheckBeforeScores([]);
+                        setCheckWarmupScores([]);
+                        setCheckAfterScores([]);
+                        setCheckPhase("before_intro");
+                        setStatus(GameState.IDLE);
+                      }}
+                      className="flex-1 py-3 bg-cyan-500 hover:bg-cyan-400 text-slate-950 rounded-xl font-bold text-xs uppercase cursor-pointer text-center active:scale-97 transition-all"
+                    >
+                      もう一度チェック
+                    </button>
+                    <button
+                      onClick={() => {
+                        setMode("measure");
+                        setCheckPhase("none");
+                        setStatus(GameState.IDLE);
+                        setCheckBeforeAvg(null);
+                        setCheckAfterAvg(null);
+                        setCheckWarmupAvg(null);
+                        setCheckBeforeScores([]);
+                        setCheckWarmupScores([]);
+                        setCheckAfterScores([]);
+                      }}
+                      className="flex-1 py-3 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 rounded-xl font-bold text-xs uppercase cursor-pointer text-center active:scale-97 transition-all"
+                    >
+                      スタートに戻る
+                    </button>
+                  </div>
+                </motion.div>
+              ) : status === GameState.IDLE && (
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.96 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="flex flex-col items-center"
+                  className="flex flex-col items-center w-full"
                 >
                   <div className="w-16 h-16 rounded-2xl bg-cyan-500/5 border border-cyan-500/10 flex items-center justify-center text-cyan-400 mb-6">
-                    <Timer className="w-8 h-8 text-cyan-400" />
+                    {mode === "check" ? (
+                      <Activity className="w-8 h-8 text-cyan-400" />
+                    ) : (
+                      <Timer className="w-8 h-8 text-cyan-400" />
+                    )}
                   </div>
                   <h3 className="text-xl font-bold text-zinc-100 mb-3 tracking-wider font-sans">
-                    反応速度測定スタート
+                    {mode === "check" ? (
+                      checkPhase === "before_intro" ? "効果チェック: 事前測定" :
+                      checkPhase === "warmup_intro" ? "効果チェック: ウォームアップ" :
+                      checkPhase === "after_intro" ? "効果チェック: 事後測定" : "効果チェック"
+                    ) : (
+                      "反応速度測定スタート"
+                    )}
                   </h3>
                   
                   {/* Step instructions */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 w-full mb-5 mt-2">
-                    {/* Step 1 */}
-                    <div className="bg-[#0e0e11] border border-zinc-900 rounded-2xl p-3 flex flex-col items-center text-center">
-                      <div className="relative w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 mb-2">
-                        <span className="absolute -top-1 -left-1 w-4 h-4 bg-cyan-400 text-[10px] font-bold text-slate-950 rounded-full flex items-center justify-center font-sans">1</span>
-                        <Timer className="w-5 h-5 text-cyan-400" />
+                  {mode === "check" ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 w-full mb-5 mt-2">
+                      {/* Step 1 */}
+                      <div className={`border rounded-2xl p-3 flex flex-col items-center text-center transition-all duration-200 ${
+                        checkPhase === "before_intro" || checkPhase === "before"
+                          ? "bg-cyan-950/10 border-cyan-500/30 shadow-[0_0_15px_rgba(34,211,238,0.05)]"
+                          : "bg-[#0e0e11] border-zinc-900 opacity-40"
+                      }`}>
+                        <div className="relative w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 mb-2">
+                          <span className="absolute -top-1 -left-1 w-4 h-4 bg-cyan-400 text-[10px] font-bold text-slate-950 rounded-full flex items-center justify-center font-sans">1</span>
+                          <Timer className="w-5 h-5 text-cyan-400" />
+                        </div>
+                        <h4 className="text-xs font-bold text-zinc-200">基準測定</h4>
+                        <p className="text-[10px] text-zinc-400 mt-1 leading-tight font-medium">
+                          まず今の実力を5回測定
+                        </p>
+                        {checkBeforeAvg !== null && (
+                          <span className="text-[10px] font-bold text-cyan-400 mt-2 block font-mono">
+                            {checkBeforeAvg} ms
+                          </span>
+                        )}
                       </div>
-                      <h4 className="text-xs font-bold text-zinc-200">待つ</h4>
-                      <p className="text-[10px] text-zinc-400 mt-1 leading-tight font-medium">
-                        円が出るまで画面を注視
-                      </p>
-                      <span className="text-[9px] text-zinc-500 mt-2 block font-medium">
-                        (待つ長さ: 1.5〜4秒の間で毎回変わります)
-                      </span>
-                    </div>
 
-                    {/* Step 2 */}
-                    <div className="bg-[#0e0e11] border border-zinc-900 rounded-2xl p-3 flex flex-col items-center text-center">
-                      <div className="relative w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 mb-2">
-                        <span className="absolute -top-1 -left-1 w-4 h-4 bg-cyan-400 text-[10px] font-bold text-slate-950 rounded-full flex items-center justify-center font-sans">2</span>
-                        <Zap className="w-5 h-5 text-cyan-400" />
+                      {/* Step 2 */}
+                      <div className={`border rounded-2xl p-3 flex flex-col items-center text-center transition-all duration-200 ${
+                        checkPhase === "warmup_intro" || checkPhase === "warmup"
+                          ? "bg-emerald-950/10 border-emerald-500/30 shadow-[0_0_15px_rgba(52,211,153,0.05)]"
+                          : "bg-[#0e0e11] border-zinc-900 opacity-40"
+                      }`}>
+                        <div className="relative w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-2">
+                          <span className="absolute -top-1 -left-1 w-4 h-4 bg-emerald-400 text-[10px] font-bold text-slate-950 rounded-full flex items-center justify-center font-sans">2</span>
+                          <Flame className="w-5 h-5 text-emerald-400" />
+                        </div>
+                        <h4 className="text-xs font-bold text-zinc-200">ほぐし</h4>
+                        <p className="text-[10px] text-zinc-400 mt-1 leading-tight font-medium">
+                          ウォームアップを3回
+                        </p>
+                        {checkWarmupAvg !== null && (
+                          <span className="text-[10px] font-bold text-emerald-400 mt-2 block font-mono">
+                            {checkWarmupAvg} ms
+                          </span>
+                        )}
                       </div>
-                      <h4 className="text-xs font-bold text-zinc-200">タップ</h4>
-                      <p className="text-[10px] text-zinc-400 mt-1 leading-tight font-medium">
-                        円が出たら素早くタップ
-                      </p>
-                      <span className="text-[9px] text-zinc-500 mt-2 block font-medium">
-                        (画面のどこでもOK)
-                      </span>
-                    </div>
 
-                    {/* Step 3 */}
-                    <div className="bg-[#0e0e11] border border-zinc-900 rounded-2xl p-3 flex flex-col items-center text-center">
-                      <div className="relative w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 mb-2">
-                        <span className="absolute -top-1 -left-1 w-4 h-4 bg-cyan-400 text-[10px] font-bold text-slate-950 rounded-full flex items-center justify-center font-sans">3</span>
-                        <Trophy className="w-5 h-5 text-cyan-400" />
+                      {/* Step 3 */}
+                      <div className={`border rounded-2xl p-3 flex flex-col items-center text-center transition-all duration-200 ${
+                        checkPhase === "after_intro" || checkPhase === "after"
+                          ? "bg-cyan-950/10 border-cyan-500/30 shadow-[0_0_15px_rgba(34,211,238,0.05)]"
+                          : "bg-[#0e0e11] border-zinc-900 opacity-40"
+                      }`}>
+                        <div className="relative w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 mb-2">
+                          <span className="absolute -top-1 -left-1 w-4 h-4 bg-cyan-400 text-[10px] font-bold text-slate-950 rounded-full flex items-center justify-center font-sans">3</span>
+                          <Zap className="w-5 h-5 text-cyan-400" />
+                        </div>
+                        <h4 className="text-xs font-bold text-zinc-200">効果測定</h4>
+                        <p className="text-[10px] text-zinc-400 mt-1 leading-tight font-medium">
+                          再計測5回で前後差を比較
+                        </p>
+                        {checkAfterAvg !== null && (
+                          <span className="text-[10px] font-bold text-cyan-400 mt-2 block font-mono">
+                            {checkAfterAvg} ms
+                          </span>
+                        )}
                       </div>
-                      <h4 className="text-xs font-bold text-zinc-200">記録を確認</h4>
-                      <p className="text-[10px] text-zinc-400 mt-1 leading-tight font-medium">
-                        {MODE_ROUNDS[mode]}回の平均タイムが記録に
-                      </p>
-                      <span className="text-[9px] text-zinc-500 mt-2 block font-medium font-mono">
-                        (測定単位: ミリ秒=1/1000秒)
-                      </span>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 w-full mb-5 mt-2">
+                      {/* Step 1 */}
+                      <div className="bg-[#0e0e11] border border-zinc-900 rounded-2xl p-3 flex flex-col items-center text-center">
+                        <div className="relative w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 mb-2">
+                          <span className="absolute -top-1 -left-1 w-4 h-4 bg-cyan-400 text-[10px] font-bold text-slate-950 rounded-full flex items-center justify-center font-sans">1</span>
+                          <Timer className="w-5 h-5 text-cyan-400" />
+                        </div>
+                        <h4 className="text-xs font-bold text-zinc-200">待つ</h4>
+                        <p className="text-[10px] text-zinc-400 mt-1 leading-tight font-medium">
+                          円が出るまで画面を注視
+                        </p>
+                        <span className="text-[9px] text-zinc-500 mt-2 block font-medium">
+                          (待つ長さ: 1.5〜4秒の間で毎回変わります)
+                        </span>
+                      </div>
+
+                      {/* Step 2 */}
+                      <div className="bg-[#0e0e11] border border-zinc-900 rounded-2xl p-3 flex flex-col items-center text-center">
+                        <div className="relative w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 mb-2">
+                          <span className="absolute -top-1 -left-1 w-4 h-4 bg-cyan-400 text-[10px] font-bold text-slate-950 rounded-full flex items-center justify-center font-sans">2</span>
+                          <Zap className="w-5 h-5 text-cyan-400" />
+                        </div>
+                        <h4 className="text-xs font-bold text-zinc-200">タップ</h4>
+                        <p className="text-[10px] text-zinc-400 mt-1 leading-tight font-medium">
+                          円が出たら素早くタップ
+                        </p>
+                        <span className="text-[9px] text-zinc-500 mt-2 block font-medium">
+                          (画面のどこでもOK)
+                        </span>
+                      </div>
+
+                      {/* Step 3 */}
+                      <div className="bg-[#0e0e11] border border-zinc-900 rounded-2xl p-3 flex flex-col items-center text-center">
+                        <div className="relative w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 mb-2">
+                          <span className="absolute -top-1 -left-1 w-4 h-4 bg-cyan-400 text-[10px] font-bold text-slate-950 rounded-full flex items-center justify-center font-sans">3</span>
+                          <Trophy className="w-5 h-5 text-cyan-400" />
+                        </div>
+                        <h4 className="text-xs font-bold text-zinc-200">記録を確認</h4>
+                        <p className="text-[10px] text-zinc-400 mt-1 leading-tight font-medium">
+                          {getMaxRounds()}回の平均タイムが記録に
+                        </p>
+                        <span className="text-[9px] text-zinc-500 mt-2 block font-medium font-mono">
+                          (測定単位: ミリ秒=1/1000秒)
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Mode Selector Tabs */}
                   <div className="flex p-1 bg-zinc-950/60 border border-zinc-900/80 rounded-xl mb-5 w-full max-w-sm relative">
@@ -1129,6 +1435,7 @@ export default function App() {
                       { id: "warmup" as TrainingMode, name: "ウォームアップ", rounds: 3 },
                       { id: "measure" as TrainingMode, name: "計測 (本番)", rounds: 5 },
                       { id: "train" as TrainingMode, name: "連続特訓", rounds: 15 },
+                      { id: "check" as TrainingMode, name: "効果チェック", rounds: 13 },
                     ].map((tab) => {
                       const isActive = mode === tab.id;
                       return (
@@ -1137,8 +1444,13 @@ export default function App() {
                           onClick={(e) => {
                             e.stopPropagation();
                             setMode(tab.id);
+                            if (tab.id === "check") {
+                              setCheckPhase("before_intro");
+                            } else {
+                              setCheckPhase("none");
+                            }
                           }}
-                          className={`flex-1 relative py-1.5 text-[11px] sm:text-xs font-bold rounded-lg transition-all cursor-pointer z-10 flex flex-col items-center justify-center ${
+                          className={`flex-1 relative py-1.5 text-[10px] sm:text-xs font-bold rounded-lg transition-all cursor-pointer z-10 flex flex-col items-center justify-center ${
                             isActive ? "text-cyan-400" : "text-zinc-500 hover:text-zinc-350"
                           }`}
                         >
@@ -1150,7 +1462,7 @@ export default function App() {
                             />
                           )}
                           <span>{tab.name}</span>
-                          <span className="text-[9px] opacity-75 mt-0.5 font-normal">({tab.rounds}回)</span>
+                          <span className="text-[8px] opacity-75 mt-0.5 font-normal">({tab.rounds}回)</span>
                         </button>
                       );
                     })}
@@ -1164,7 +1476,7 @@ export default function App() {
 
                   {/* Tool Purpose Statement (FPS Warmup) */}
                   <p className="text-[11px] sm:text-xs font-semibold text-cyan-400/80 mb-3.5 tracking-wider">
-                    FPSのウォームアップに。反応速度は鍛えると速くなる
+                    {mode === "check" ? "ウォームアップで本当に反応速度は速くなるのか？" : "FPSのウォームアップに。反応速度は鍛えると速くなる"}
                   </p>
                   
                   <button
@@ -1180,6 +1492,9 @@ export default function App() {
                       {mode === "warmup" && "ウォームアップを開始する (3ラウンド)"}
                       {mode === "measure" && "測定を開始する (5ラウンド)"}
                       {mode === "train" && "連続特訓を開始する (15ラウンド)"}
+                      {mode === "check" && checkPhase === "before_intro" && "1. 基準測定 (before) を開始する (5回)"}
+                      {mode === "check" && checkPhase === "warmup_intro" && "2. ウォームアップを開始する (3回)"}
+                      {mode === "check" && checkPhase === "after_intro" && "3. 再測定 (after) を開始する (5回)"}
                     </span>
                     <Sparkles className="w-4 h-4 text-slate-950" />
                   </button>
@@ -1215,7 +1530,7 @@ export default function App() {
               {status === GameState.RESULT && (
                 <>
                   {/* Case A: Between rounds (1st to N-1 round result) */}
-                  {roundScores.length < MODE_ROUNDS[mode] && lastRoundResult !== null && reactionTime === null && (
+                  {roundScores.length < getMaxRounds() && lastRoundResult !== null && reactionTime === null && (
                     <motion.div 
                       initial={{ opacity: 0, scale: 0.94 }}
                       animate={{ opacity: 1, scale: 1 }}
@@ -1268,8 +1583,8 @@ export default function App() {
 
                       {/* 途中経過の測定タイム一覧 */}
                       <div className="w-full max-w-sm mt-6 bg-zinc-950/40 border border-zinc-900/60 rounded-2xl p-3 text-left">
-                        <div className={`grid ${mode === 'warmup' ? 'grid-cols-3' : 'grid-cols-5'} gap-1.5`}>
-                          {Array.from({ length: MODE_ROUNDS[mode] }).map((_, idx) => {
+                        <div className={`grid ${getMaxRounds() === 3 ? 'grid-cols-3' : 'grid-cols-5'} gap-1.5`}>
+                          {Array.from({ length: getMaxRounds() }).map((_, idx) => {
                             const isCompleted = idx < roundScores.length;
                             if (isCompleted) {
                               const score = roundScores[idx];
@@ -1305,20 +1620,39 @@ export default function App() {
                   )}
 
                   {/* Case B: Final scores calculation (All rounds complete) */}
-                  {roundScores.length === MODE_ROUNDS[mode] && reactionTime !== null && (
+                  {roundScores.length === getMaxRounds() && reactionTime !== null && (
                     <motion.div 
                       initial={{ opacity: 0, scale: 0.94 }}
                       animate={{ opacity: 1, scale: 1 }}
                       className="flex flex-col items-center w-full"
                     >
-                      <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-500 tracking-wider mb-2">
-                        <Trophy className="w-3.5 h-3.5 text-amber-405" />
-                        <span>すべての測定が完了しました</span>
-                      </div>
-                      
-                      <span className="text-[10px] font-bold text-zinc-500 tracking-wider uppercase mb-1">
-                        {MODE_ROUNDS[mode]}回の平均タイム（今回の成績）
-                      </span>
+                      {mode === "check" ? (
+                        <>
+                          <div className="flex items-center gap-1.5 text-[10px] font-bold text-cyan-400 tracking-wider mb-2">
+                            <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                            <span>
+                              {checkPhase === "before" && "基準測定 (BEFORE) が完了しました"}
+                              {checkPhase === "warmup" && "ウォームアップ (WARMUP) が完了しました"}
+                              {checkPhase === "after" && "効果測定 (AFTER) が完了しました"}
+                            </span>
+                          </div>
+                          
+                          <span className="text-[10px] font-bold text-zinc-500 tracking-wider uppercase mb-1">
+                            {getMaxRounds()}回のフェーズ平均タイム
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-500 tracking-wider mb-2">
+                            <Trophy className="w-3.5 h-3.5 text-amber-405" />
+                            <span>すべての測定が完了しました</span>
+                          </div>
+                          
+                          <span className="text-[10px] font-bold text-zinc-500 tracking-wider uppercase mb-1">
+                            {getMaxRounds()}回の平均タイム（今回の成績）
+                          </span>
+                        </>
+                      )}
 
                       {/* Giant Average Reaction value & Evaluation Rank Badge */}
                       <div className="flex flex-col md:flex-row items-center justify-center gap-6 mb-4 mt-2 bg-zinc-950/80 border border-zinc-900 rounded-2xl py-4 px-8 w-full max-w-sm">
@@ -1341,19 +1675,29 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Non-saving notice for training/warmup mode on results */}
-                      {mode !== "measure" && (
-                        <p className="text-[10px] text-zinc-500 font-medium mb-4.5 tracking-wider">
-                          ※このモードの記録はグラフに保存されません
-                        </p>
+                      {/* Phase explanation & transition button or retry warning */}
+                      {mode === "check" ? (
+                        <div className="w-full max-w-sm bg-cyan-950/5 border border-cyan-500/10 rounded-2xl p-4 mb-5 text-center">
+                          <p className="text-[11px] text-zinc-300 leading-relaxed font-sans font-medium">
+                            {checkPhase === "before" && "基準測定が完了しました。次はフェーズ2「ウォームアップ（ほぐし3回）」に進み、感覚を研ぎ澄まします。"}
+                            {checkPhase === "warmup" && "ほぐしが完了しました。次は最終フェーズ「事後測定（5回）」に進み、ウォームアップ後の反応速度を再測定します。"}
+                            {checkPhase === "after" && "すべての測定フェーズが終了しました。測定前後で反応速度がどのように変化したか、分析結果を確認しましょう。"}
+                          </p>
+                        </div>
+                      ) : (
+                        mode !== "measure" && (
+                          <p className="text-[10px] text-zinc-500 font-medium mb-4.5 tracking-wider">
+                            ※このモードの記録はグラフに保存されません
+                          </p>
+                        )
                       )}
 
                       {/* Details of individual rounds */}
                       <div className="w-full bg-zinc-950/60 border border-zinc-900 rounded-2xl p-4 mb-6 text-left">
                         <h4 className="text-[10px] font-bold text-zinc-400 mb-3 flex items-center justify-between border-b border-zinc-900 pb-2">
-                          <span>{MODE_ROUNDS[mode]}回の測定タイム一覧</span>
+                          <span>{getMaxRounds()}回の測定タイム一覧</span>
                         </h4>
-                        <div className={`grid ${mode === 'warmup' ? 'grid-cols-3' : 'grid-cols-5'} gap-2`}>
+                        <div className={`grid ${getMaxRounds() === 3 ? 'grid-cols-3' : 'grid-cols-5'} gap-2`}>
                           {roundScores.map((score, idx) => {
                             const isFoul = foulRounds.includes(idx);
                             if (isFoul) {
@@ -1377,20 +1721,38 @@ export default function App() {
                       </div>
 
                       <div className="flex gap-3">
-                        <button
-                          id="btn-retry"
-                          onClick={(e) => {
-                            e.stopPropagation(); // prevent parent click callback
-                            startFullGame();
-                          }}
-                          className="group relative inline-flex items-center gap-2 px-6 py-3 bg-cyan-500 hover:bg-cyan-400 text-slate-950 rounded-xl font-bold text-xs uppercase cursor-pointer"
-                        >
-                          <RotateCcw className="w-3.5 h-3.5 text-slate-950" />
-                          <span>もう一度プレイ</span>
-                        </button>
+                        {mode === "check" ? (
+                          <button
+                            id="btn-next-phase"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              proceedToCheckNextPhase();
+                            }}
+                            className="group relative inline-flex items-center gap-2 px-8 py-3.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 rounded-xl font-bold text-xs uppercase cursor-pointer active:scale-97 transition-all"
+                          >
+                            <span>
+                              {checkPhase === "before" && "ウォームアップ（ほぐし）に進む"}
+                              {checkPhase === "warmup" && "最終効果測定に進む"}
+                              {checkPhase === "after" && "総合結果を確認する"}
+                            </span>
+                            <Sparkles className="w-4 h-4 text-slate-950" />
+                          </button>
+                        ) : (
+                          <button
+                            id="btn-retry"
+                            onClick={(e) => {
+                              e.stopPropagation(); // prevent parent click callback
+                              startFullGame();
+                            }}
+                            className="group relative inline-flex items-center gap-2 px-6 py-3 bg-cyan-500 hover:bg-cyan-400 text-slate-950 rounded-xl font-bold text-xs uppercase cursor-pointer"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5 text-slate-950" />
+                            <span>もう一度プレイ</span>
+                          </button>
+                        )}
                       </div>
                       <p className="text-[10px] text-zinc-500 font-medium tracking-wider mt-5">
-                        またはスペースキーでもう一度開始できます
+                        {mode === "check" ? "またはスペースキーを押しても次に進めます" : "またはスペースキーでもう一度開始できます"}
                       </p>
                     </motion.div>
                   )}
